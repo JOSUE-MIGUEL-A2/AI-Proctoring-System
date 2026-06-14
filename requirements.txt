@@ -1,0 +1,6 @@
+opencv-python==4.9.0.80
+ultralytics
+numpy
+playsound==1.2.2
+requests
+Pillow
