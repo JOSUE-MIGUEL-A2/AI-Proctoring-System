@@ -60,8 +60,8 @@ class HeadPoseEstimator:
                 valid_3d.append(pt3d)
                 valid_2d.append(pt2d)
 
-        if len(valid_2d) < 4:
-            # solvePnP needs at least 4 correspondences for reliable results
+        if len(valid_2d) < 3:
+            # solvePnP needs at least 3 correspondences for reliable results
             return None
 
         model_points = np.array(valid_3d, dtype=np.float64)
@@ -72,7 +72,7 @@ class HeadPoseEstimator:
             image_points,
             self.camera_matrix,
             self.dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE,
+            flags=cv2.SOLVEPNP_SQPNP,
         )
 
         if not success:
@@ -92,12 +92,12 @@ class HeadPoseEstimator:
         singular = sy < 1e-6
 
         if not singular:
-            pitch = np.degrees(np.arctan2(-R[2, 0], sy))
-            yaw   = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
-            roll  = np.degrees(np.arctan2(R[2, 1], R[2, 2]))
+            yaw   = np.degrees(np.arctan2(-R[2, 0], sy))
+            pitch = np.degrees(np.arctan2(R[2, 1], R[2, 2]))
+            roll  = np.degrees(np.arctan2(R[1, 0], R[0, 0]))
         else:
-            pitch = np.degrees(np.arctan2(-R[2, 0], sy))
-            yaw   = 0.0
+            yaw   = np.degrees(np.arctan2(-R[2, 0], sy))
+            pitch = 0.0
             roll  = np.degrees(np.arctan2(-R[1, 2], R[1, 1]))
 
         return yaw, pitch, roll

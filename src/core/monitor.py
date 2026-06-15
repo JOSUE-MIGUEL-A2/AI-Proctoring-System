@@ -13,11 +13,11 @@ class MonitorConfig:
     calibration_duration_sec: float = 3.0   # How long student must look straight
 
     # --- Tolerance thresholds (degrees) ---
-    yaw_threshold:   float = 20.0   # Left/right head turn
-    pitch_threshold: float = 15.0   # Up/down head tilt
+    yaw_threshold:   float = 25.0   # Left/right head turn
+    pitch_threshold: float = 20.0   # Up/down head tilt
 
     # --- Evaluation window (false positive prevention) ---
-    violation_duration_sec: float = 1.5  # Must exceed threshold for this long
+    violation_duration_sec: float = 1.5 # Must exceed threshold for this long
 
     # --- Smoothing ---
     smoothing_window: int = 5  # Rolling average over N frames
