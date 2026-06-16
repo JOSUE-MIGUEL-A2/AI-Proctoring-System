@@ -110,7 +110,7 @@ def main():
                 break
             if key == ord('r'):
                 monitor.reset_calibration()
-                print("[Calibration] Reset — look straight at the screen.")
+                print("[Calibration] Reset - look straight at the screen.")
 
     print("Session ended. Violations logged to logs/violations.jsonl")
 

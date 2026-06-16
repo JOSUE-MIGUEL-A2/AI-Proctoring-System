@@ -30,7 +30,7 @@ def draw_hud(
         cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
 
         cv2.putText(frame,
-                    "CALIBRATING — Look straight at the screen",
+                    "CALIBRATING - Look straight at the screen",
                     (w // 2 - 280, h // 2 - 10),
                     cv2.FONT_HERSHEY_DUPLEX, 0.75, (255, 255, 255), 1)
 
@@ -56,9 +56,9 @@ def draw_hud(
         cv2.putText(frame, text, (10, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
 
-    put(f"Yaw:   {yaw:+.1f}°  (delta {dy:.1f}° / max {config.yaw_threshold}°)",
+    put(f"Yaw:   {yaw:+.1f} deg  (delta {dy:.1f} / max {config.yaw_threshold})",
         25, color=(0, 200, 255) if dy > config.yaw_threshold else (200, 200, 200))
-    put(f"Pitch: {pitch:+.1f}°  (delta {dp:.1f}° / max {config.pitch_threshold}°)",
+    put(f"Pitch: {pitch:+.1f} deg  (delta {dp:.1f} / max {config.pitch_threshold})",
         50, color=(0, 200, 255) if dp > config.pitch_threshold else (200, 200, 200))
 
     vd = status["violation_duration_sec"]
