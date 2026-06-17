@@ -85,3 +85,28 @@ def draw_hud(
         cv2.circle(frame, (w - 20, 20), 10, (0, 200, 0), -1)
 
     return frame
+def draw_object_alert(frame: np.ndarray, violations: list[dict]) -> np.ndarray:
+    """
+    Draws a persistent orange banner at the bottom listing all detected objects.
+    Only shown when at least one forbidden object is present.
+    """
+    if not violations:
+        return frame
+
+    h, w = frame.shape[:2]
+
+    # Semi-transparent orange bar at the bottom
+    overlay = frame.copy()
+    cv2.rectangle(overlay, (0, h - 40), (w, h), (0, 120, 220), -1)
+    cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+
+    names = ", ".join(set(v["label"] for v in violations))
+    text  = f"OBJECT ALERT: {names}"
+    cv2.putText(
+        frame, text,
+        (10, h - 14),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6, (255, 255, 255), 1, cv2.LINE_AA,
+    )
+
+    return frame

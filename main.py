@@ -1,5 +1,3 @@
-# main.py
-
 import cv2
 import time
 from config.settings import MonitorConfig, AppConfig
@@ -10,6 +8,8 @@ from src.core.monitor import GazeMonitor
 from src.utils.overlay import draw_hud
 from src.utils.audio_alert import AudioAlert
 from src.utils.logger import ViolationLogger
+from src.core.object_detector import ObjectDetector
+from src.utils.overlay import draw_hud, draw_object_alert
 
 
 def main():
@@ -32,6 +32,11 @@ def main():
     logger    = ViolationLogger(
         webhook_url = app_cfg.webhook_url,
         student_id  = app_cfg.student_id,
+    )
+    obj_detector = ObjectDetector(
+        confidence  = 0.45,
+        proc_width  = app_cfg.proc_width,
+        proc_height = app_cfg.proc_height,
     )
 
     # ── FPS tracking ────────────────────────────────────────────────────
@@ -89,7 +94,16 @@ def main():
                 logger.log(frame, status)
 
             # ── HUD overlay ────────────────────────────────────────────────
+            # ── Object detection ───────────────────────────────────────────
+            obj_violations = obj_detector.detect(frame)
+            if obj_violations:
+                frame = obj_detector.draw_violations(frame, obj_violations)
+                logger.log_object(frame, obj_violations)
+                alert.trigger()
+
+            # ── HUD overlay ────────────────────────────────────────────────
             frame = draw_hud(frame, status, mon_cfg, violation)
+            frame = draw_object_alert(frame, obj_violations)
 
             # ── FPS counter ────────────────────────────────────────────────
             frame_count += 1
