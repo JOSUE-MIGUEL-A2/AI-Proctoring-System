@@ -77,7 +77,7 @@ def draw_hud(
         cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
         cv2.putText(frame,
-                    "⚠  WARNING: LOOK AT THE SCREEN",
+                    "!!! WARNING: LOOK AT THE SCREEN",
                     (w // 2 - 265, h // 2 + 10),
                     cv2.FONT_HERSHEY_DUPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
     else:
