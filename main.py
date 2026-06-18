@@ -8,7 +8,7 @@ from src.core.monitor import GazeMonitor
 from src.utils.overlay import draw_hud
 from src.utils.audio_alert import AudioAlert
 from src.utils.logger import ViolationLogger
-from src.core.object_detector import ObjectDetector
+from src.core.object_detector import ObjectDetectorAsync
 from src.utils.overlay import draw_hud, draw_object_alert
 
 
@@ -33,11 +33,15 @@ def main():
         webhook_url = app_cfg.webhook_url,
         student_id  = app_cfg.student_id,
     )
-    obj_detector = ObjectDetector(
+    obj_detector = ObjectDetectorAsync(
+        model_path  = "yolov8m.pt",
         confidence  = 0.45,
         proc_width  = app_cfg.proc_width,
         proc_height = app_cfg.proc_height,
     )
+    obj_violations    = []   # cached result from last detection run
+    obj_frame_counter = 0    # counts frames between detections
+    OBJ_DETECT_EVERY  = 10  # run object detection once every N frames
 
     # ── FPS tracking ────────────────────────────────────────────────────
     frame_count = 0
@@ -93,14 +97,15 @@ def main():
                 alert.trigger()
                 logger.log(frame, status)
 
-            # ── HUD overlay ────────────────────────────────────────────────
-            # ── Object detection ───────────────────────────────────────────
-            obj_violations = obj_detector.detect(frame)
+            # ── Object detection (async — never blocks the video loop) ──────
+            obj_detector.submit_frame(frame)
+            obj_violations = obj_detector.get_violations()
+
             if obj_violations:
                 frame = obj_detector.draw_violations(frame, obj_violations)
                 logger.log_object(frame, obj_violations)
                 alert.trigger()
-
+           
             # ── HUD overlay ────────────────────────────────────────────────
             frame = draw_hud(frame, status, mon_cfg, violation)
             frame = draw_object_alert(frame, obj_violations)

@@ -1,6 +1,7 @@
 import cv2
 import numpy as np
 from ultralytics import YOLO
+import threading
 
 
 # COCO class names that are forbidden during an exam
@@ -146,3 +147,47 @@ class ObjectDetector:
             )
 
         return frame
+class ObjectDetectorAsync:
+    """
+    Wraps ObjectDetector to run inference in a background thread.
+    The video loop always gets the latest cached result instantly.
+    """
+
+    def __init__(self, **kwargs):
+        self._detector    = ObjectDetector(**kwargs)
+        self._violations  = []
+        self._lock        = threading.Lock()
+        self._running     = False
+        self._frame       = None
+        self._frame_lock  = threading.Lock()
+
+        self._thread = threading.Thread(target=self._worker, daemon=True)
+        self._thread.start()
+
+    def submit_frame(self, frame: np.ndarray):
+        """Feed the latest frame. Non-blocking — drops if worker is busy."""
+        with self._frame_lock:
+            self._frame = frame.copy()
+
+    def get_violations(self) -> list[dict]:
+        """Returns the latest cached violation list. Always instant."""
+        with self._lock:
+            return list(self._violations)
+
+    def draw_violations(self, frame, violations):
+        return self._detector.draw_violations(frame, violations)
+
+    def _worker(self):
+        while True:
+            frame = None
+            with self._frame_lock:
+                if self._frame is not None:
+                    frame = self._frame
+                    self._frame = None
+
+            if frame is not None:
+                result = self._detector.detect(frame)
+                with self._lock:
+                    self._violations = result
+            else:
+                threading.Event().wait(0.01)  # sleep 10ms if no frame queue
