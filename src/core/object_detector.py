@@ -1,25 +1,22 @@
 import cv2
+import torch
+import threading
 import numpy as np
 from ultralytics import YOLO
-import threading
 
 
 # COCO class names that are forbidden during an exam
 FORBIDDEN_CLASSES = {
-    "cell phone":   "Phone detected",
-    "book":         "Book detected",
-    "laptop":       "Laptop detected",
-    "remote":       "Remote detected",
-    "keyboard":     "Keyboard detected",
-    "mouse":        "Mouse detected",
-    "tv":           "Screen detected",
-    "monitor":      "Monitor detected",
-    "earphones":    "Earphones detected",
-    "headphones":   "Headphones detected",
+    "cell phone": "Phone detected",
+    "book":       "Book detected",
+    "laptop":     "Laptop detected",
+    "remote":     "Remote detected",
+    "keyboard":   "Keyboard detected",
+    "mouse":      "Mouse detected",
+    "tv":         "Screen detected",
 }
 
-# COCO numeric IDs for the classes above (for fast lookup)
-# Full list: https://github.com/ultralytics/ultralytics/blob/main/ultralytics/cfg/datasets/coco.yaml
+# COCO numeric IDs mapped to class names
 FORBIDDEN_IDS = {
     67: "cell phone",
     73: "book",
@@ -30,28 +27,32 @@ FORBIDDEN_IDS = {
     62: "tv",
 }
 
+# Per-class confidence overrides — lower = more sensitive
 CLASS_CONFIDENCE = {
-    73: 0.20,   # book — very low threshold, hard to detect
-    67: 0.15,   # cell phone
-    63: 0.20,   # laptop
-    62: 0.20,   # tv
+    73: 0.30,   # book — very low threshold, hard to detect
+    67: 0.65,   # cell phone
+    63: 0.45,   # laptop
+    62: 0.45,   # tv
 }
 
 
 class ObjectDetector:
     """
     Runs YOLOv8 object detection on each frame to flag forbidden items.
-    Uses yolov8n.pt (nano) — auto-downloads ~6 MB on first run.
+    Uses yolov8m.pt (medium) for better accuracy — auto-downloads on first run.
     """
 
     def __init__(
         self,
-        model_path:  str   = "yolov8n.pt",
+        model_path:  str   = "yolov8m.pt",
         confidence:  float = 0.45,
-        proc_width:  int   = 416,
-        proc_height: int   = 416,
+        proc_width:  int   = 320,
+        proc_height: int   = 320,
     ):
+        self.device      = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[ObjectDetector] Using device: {self.device}")
         self.model       = YOLO(model_path)
+        self.model.to(self.device)
         self.confidence  = confidence
         self.proc_width  = proc_width
         self.proc_height = proc_height
@@ -62,10 +63,10 @@ class ObjectDetector:
 
         Returns a list of violation dicts:
           {
-            "label":      str,   # e.g. "Phone detected"
-            "class_name": str,   # e.g. "cell phone"
+            "label":      str,   e.g. "Phone detected"
+            "class_name": str,   e.g. "cell phone"
             "confidence": float,
-            "box":        (x1, y1, x2, y2)  # pixel coords on original frame
+            "box":        (x1, y1, x2, y2)  pixel coords on original frame
           }
         """
         h, w = frame.shape[:2]
@@ -147,6 +148,8 @@ class ObjectDetector:
             )
 
         return frame
+
+
 class ObjectDetectorAsync:
     """
     Wraps ObjectDetector to run inference in a background thread.
@@ -154,18 +157,17 @@ class ObjectDetectorAsync:
     """
 
     def __init__(self, **kwargs):
-        self._detector    = ObjectDetector(**kwargs)
-        self._violations  = []
-        self._lock        = threading.Lock()
-        self._running     = False
-        self._frame       = None
-        self._frame_lock  = threading.Lock()
+        self._detector   = ObjectDetector(**kwargs)
+        self._violations = []
+        self._lock       = threading.Lock()
+        self._frame      = None
+        self._frame_lock = threading.Lock()
 
         self._thread = threading.Thread(target=self._worker, daemon=True)
         self._thread.start()
 
     def submit_frame(self, frame: np.ndarray):
-        """Feed the latest frame. Non-blocking — drops if worker is busy."""
+        """Feed the latest frame. Non-blocking - drops if worker is busy."""
         with self._frame_lock:
             self._frame = frame.copy()
 
@@ -174,7 +176,7 @@ class ObjectDetectorAsync:
         with self._lock:
             return list(self._violations)
 
-    def draw_violations(self, frame, violations):
+    def draw_violations(self, frame: np.ndarray, violations: list[dict]) -> np.ndarray:
         return self._detector.draw_violations(frame, violations)
 
     def _worker(self):
@@ -183,11 +185,14 @@ class ObjectDetectorAsync:
             with self._frame_lock:
                 if self._frame is not None:
                     frame = self._frame
-                    self._frame = None
+                    self._frame = None  # always grab the LATEST frame, discard old
 
             if frame is not None:
-                result = self._detector.detect(frame)
-                with self._lock:
-                    self._violations = result
+                try:
+                    result = self._detector.detect(frame)
+                    with self._lock:
+                        self._violations = result
+                except Exception as e:
+                    print(f"[ObjectDetector] Error: {e}")
             else:
-                threading.Event().wait(0.01)  # sleep 10ms if no frame queue
+                threading.Event().wait(0.03)  # 30ms idle sleep

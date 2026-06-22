@@ -1,3 +1,5 @@
+# main.py
+
 import cv2
 import time
 from config.settings import MonitorConfig, AppConfig
@@ -5,20 +7,19 @@ from src.core.camera import CameraCapture
 from src.core.detector import PoseDetector
 from src.core.pose_estimator import HeadPoseEstimator
 from src.core.monitor import GazeMonitor
-from src.utils.overlay import draw_hud
-from src.utils.audio_alert import AudioAlert
-from src.utils.logger import ViolationLogger
 from src.core.object_detector import ObjectDetectorAsync
 from src.utils.overlay import draw_hud, draw_object_alert
+from src.utils.audio_alert import AudioAlert
+from src.utils.logger import ViolationLogger
 
 
 def main():
     app_cfg = AppConfig()
     mon_cfg = MonitorConfig(
         calibration_duration_sec = 3.0,
-        yaw_threshold            = 20.0,
-        pitch_threshold          = 15.0,
-        violation_duration_sec   = 1.5,
+        yaw_threshold            = 25.0,
+        pitch_threshold          = 20.0,
+        violation_duration_sec   = 2.0,
         smoothing_window         = 5,
     )
 
@@ -39,16 +40,13 @@ def main():
         proc_width  = app_cfg.proc_width,
         proc_height = app_cfg.proc_height,
     )
-    obj_violations    = []   # cached result from last detection run
-    obj_frame_counter = 0    # counts frames between detections
-    OBJ_DETECT_EVERY  = 10  # run object detection once every N frames
 
-    # ── FPS tracking ────────────────────────────────────────────────────
+    # FPS tracking
     frame_count = 0
     fps_timer   = time.perf_counter()
     current_fps = 0.0
 
-    print("Starting AI Proctoring System… Press 'Q' to quit, 'R' to recalibrate.")
+    print("Starting AI Proctoring System... Press 'Q' to quit, 'R' to recalibrate.")
 
     with CameraCapture(width=app_cfg.frame_width, height=app_cfg.frame_height) as cam:
         while True:
@@ -57,10 +55,10 @@ def main():
                 print("[ERROR] Lost camera feed.")
                 break
 
-            # ── Resize for faster processing, keep display at full res ──
+            # Resize for faster processing, keep display at full res
             small = cv2.resize(frame, (app_cfg.proc_width, app_cfg.proc_height))
 
-            # ── Detection & estimation ────────────────────────────────────
+            # Detection & estimation
             landmarks = detector.detect(small)
 
             if landmarks:
@@ -75,13 +73,12 @@ def main():
             else:
                 result = None
 
-            # ── Monitoring logic ───────────────────────────────────────────
+            # Monitoring logic
             if result:
                 yaw, pitch, roll = result
-                print(f"Yaw: {yaw:+.1f}°  Pitch: {pitch:+.1f}°  Roll: {roll:+.1f}°", end="\r")
+                print(f"Yaw: {yaw:+.1f}  Pitch: {pitch:+.1f}  Roll: {roll:+.1f}", end="\r")
                 status = monitor.update(yaw, pitch)
             else:
-                # No face detected — use last known status or idle
                 status = {
                     "phase": "monitoring" if monitor.is_calibrated else "calibrating",
                     "calibration_progress": 0.0,
@@ -92,12 +89,12 @@ def main():
 
             violation = status.get("violation", False)
 
-            # ── Alerts & logging ───────────────────────────────────────────
+            # Gaze alerts & logging
             if violation:
                 alert.trigger()
                 logger.log(frame, status)
 
-            # ── Object detection (async — never blocks the video loop) ──────
+            # Object detection (async - never blocks the video loop)
             obj_detector.submit_frame(frame)
             obj_violations = obj_detector.get_violations()
 
@@ -105,12 +102,12 @@ def main():
                 frame = obj_detector.draw_violations(frame, obj_violations)
                 logger.log_object(frame, obj_violations)
                 alert.trigger()
-           
-            # ── HUD overlay ────────────────────────────────────────────────
+
+            # HUD overlay
             frame = draw_hud(frame, status, mon_cfg, violation)
             frame = draw_object_alert(frame, obj_violations)
 
-            # ── FPS counter ────────────────────────────────────────────────
+            # FPS counter
             frame_count += 1
             if frame_count % 30 == 0:
                 now = time.perf_counter()
@@ -125,7 +122,7 @@ def main():
 
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
-                print("Exiting…")
+                print("Exiting...")
                 break
             if key == ord('r'):
                 monitor.reset_calibration()
@@ -136,4 +133,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-    

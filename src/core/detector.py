@@ -1,5 +1,4 @@
-# src/core/detector.py
-
+import torch
 import numpy as np
 from ultralytics import YOLO
 
@@ -20,8 +19,10 @@ class PoseDetector:
     """
 
     def __init__(self, model_path: str = "yolov8n-pose.pt", confidence: float = 0.5):
-        # Model auto-downloads to ~/.cache/ultralytics on first run
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        print(f"[PoseDetector] Using device: {self.device}")
         self.model = YOLO(model_path)
+        self.model.to(self.device)
         self.confidence = confidence
 
     def detect(self, frame: np.ndarray) -> dict | None:
@@ -51,7 +52,7 @@ class PoseDetector:
         landmarks = {}
         for name, idx in KEYPOINT_INDICES.items():
             x, y = kp_xy[idx]
-            # Treat (0, 0) as undetected — YOLO returns zeros for occluded points
+            # Treat (0, 0) as undetected - YOLO returns zeros for occluded points
             landmarks[name] = (float(x), float(y)) if (x > 0 and y > 0) else None
 
         # Require at least nose + both eyes to compute head pose reliably
