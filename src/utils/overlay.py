@@ -1,5 +1,3 @@
-# src/utils/overlay.py
-
 import cv2
 import numpy as np
 
@@ -10,13 +8,9 @@ def draw_hud(
     config,
     violation: bool,
 ) -> np.ndarray:
-    """
-    Draws the heads-up display (HUD) onto the frame.
-    Includes calibration progress bar, angle readouts, and violation banner.
-    """
     h, w = frame.shape[:2]
 
-    # ── Calibration phase ───────────────────────────────────────────────
+    # Calibration phase
     if status["phase"] == "calibrating":
         progress = status["calibration_progress"]
         bar_w = int(w * 0.6)
@@ -24,7 +18,6 @@ def draw_hud(
         bar_x = (w - bar_w) // 2
         bar_y = h // 2 + 40
 
-        # Background panel
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, h // 2 - 50), (w, h // 2 + 90), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
@@ -34,10 +27,8 @@ def draw_hud(
                     (w // 2 - 280, h // 2 - 10),
                     cv2.FONT_HERSHEY_DUPLEX, 0.75, (255, 255, 255), 1)
 
-        # Progress bar background
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + bar_w, bar_y + bar_h),
                       (80, 80, 80), -1)
-        # Progress bar fill
         fill_w = int(bar_w * progress)
         cv2.rectangle(frame, (bar_x, bar_y), (bar_x + fill_w, bar_y + bar_h),
                       (0, 200, 100), -1)
@@ -45,13 +36,12 @@ def draw_hud(
                       (200, 200, 200), 1)
         return frame
 
-    # ── Monitoring phase ─────────────────────────────────────────────────
+    # Monitoring phase
     yaw   = status["smoothed_yaw"]
     pitch = status["smoothed_pitch"]
     dy    = status["yaw_delta"]
     dp    = status["pitch_delta"]
 
-    # Angle readout (top-left)
     def put(text, y, color=(200, 200, 200)):
         cv2.putText(frame, text, (10, y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
@@ -66,47 +56,105 @@ def draw_hud(
         put(f"Away for: {vd:.1f}s  (limit {config.violation_duration_sec}s)",
             75, color=(0, 100, 255))
 
-    # ── Violation banner ──────────────────────────────────────────────────
     if violation:
-        # Red flashing border
         cv2.rectangle(frame, (0, 0), (w - 1, h - 1), (0, 0, 220), 6)
-
-        # Warning banner
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, h // 2 - 45), (w, h // 2 + 45), (0, 0, 180), -1)
         cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
-
         cv2.putText(frame,
-                    "!!! WARNING: LOOK AT THE SCREEN",
-                    (w // 2 - 265, h // 2 + 10),
+                    "!! WARNING: LOOK AT THE SCREEN",
+                    (w // 2 - 245, h // 2 + 10),
                     cv2.FONT_HERSHEY_DUPLEX, 0.9, (255, 255, 255), 2, cv2.LINE_AA)
     else:
-        # Green "OK" indicator
         cv2.circle(frame, (w - 20, 20), 10, (0, 200, 0), -1)
 
     return frame
+
+
 def draw_object_alert(frame: np.ndarray, violations: list[dict]) -> np.ndarray:
-    """
-    Draws a persistent orange banner at the bottom listing all detected objects.
-    Only shown when at least one forbidden object is present.
-    """
     if not violations:
         return frame
 
     h, w = frame.shape[:2]
 
-    # Semi-transparent orange bar at the bottom
     overlay = frame.copy()
     cv2.rectangle(overlay, (0, h - 40), (w, h), (0, 120, 220), -1)
     cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
 
     names = ", ".join(set(v["label"] for v in violations))
-    text  = f"OBJECT ALERT: {names}"
-    cv2.putText(
-        frame, text,
-        (10, h - 14),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.6, (255, 255, 255), 1, cv2.LINE_AA,
-    )
+    cv2.putText(frame, f"OBJECT ALERT: {names}",
+                (10, h - 14),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.6, (255, 255, 255), 1, cv2.LINE_AA)
+
+    return frame
+
+
+def draw_gaze_status(frame: np.ndarray, gaze_status: dict) -> np.ndarray:
+    zone      = gaze_status.get("zone", "CENTER")
+    violation = gaze_status.get("violation", False)
+    duration  = gaze_status.get("duration_sec", 0.0)
+
+    color = (0, 200, 0) if zone == "CENTER" else (0, 100, 255)
+    if violation:
+        color = (0, 0, 220)
+
+    label = f"Gaze: {zone}"
+    if duration > 0:
+        label += f"  ({duration:.1f}s)"
+
+    cv2.putText(frame, label, (10, 100),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
+
+    if violation:
+        h, w = frame.shape[:2]
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, h // 2 + 50), (w, h // 2 + 95), (0, 0, 160), -1)
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        cv2.putText(frame,
+                    "!! GAZE WARNING: Eyes off screen",
+                    (w // 2 - 210, h // 2 + 80),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.75, (255, 255, 255), 1, cv2.LINE_AA)
+
+    return frame
+
+
+def draw_face_status(frame: np.ndarray, face_result: dict) -> np.ndarray:
+    status = face_result.get("status", "pending")
+
+    if status == "verified":
+        color = (0, 180, 0)
+        label = "ID: Verified"
+    elif status == "mismatch":
+        conf  = face_result.get("confidence", 0)
+        color = (0, 0, 220)
+        label = f"ID: MISMATCH ({conf:.0f})"
+        h, w  = frame.shape[:2]
+        overlay = frame.copy()
+        cv2.rectangle(overlay, (0, h // 2 + 100), (w, h // 2 + 145), (0, 0, 130), -1)
+        cv2.addWeighted(overlay, 0.75, frame, 0.25, 0, frame)
+        cv2.putText(frame,
+                    "!! ID MISMATCH: Wrong student detected",
+                    (w // 2 - 230, h // 2 + 132),
+                    cv2.FONT_HERSHEY_DUPLEX, 0.75, (255, 255, 255), 1, cv2.LINE_AA)
+    elif status == "no_face":
+        color = (0, 140, 255)
+        label = "ID: No face"
+    elif status == "not_enrolled":
+        color = (150, 150, 150)
+        label = "ID: Not enrolled"
+    elif status == "collecting":
+        prog  = face_result.get("progress", 0)
+        color = (200, 200, 0)
+        label = f"Enrolling... {prog:.0%}"
+    elif status == "complete":
+        color = (0, 200, 100)
+        label = "Enrollment complete!"
+    else:
+        color = (150, 150, 150)
+        label = "ID: --"
+
+    cv2.putText(frame, label, (10, 125),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, color, 1, cv2.LINE_AA)
 
     return frame

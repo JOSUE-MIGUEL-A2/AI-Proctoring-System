@@ -1,6 +1,3 @@
-# src/utils/logger.py
-
-import os
 import json
 import time
 import threading
@@ -12,16 +9,22 @@ from pathlib import Path
 
 class ViolationLogger:
     """
-    Logs violations to a local JSON file and optionally sends them
-    to a remote webhook endpoint.
+    Logs all violation types to a local JSONL file and optionally
+    sends them to a remote webhook endpoint.
+
+    Violation types logged:
+      - gaze_violation      (head pose deviation)
+      - gaze_eye_violation  (iris gaze deviation)
+      - foreign_object      (forbidden item detected)
+      - face_mismatch       (wrong person at camera)
     """
 
     def __init__(
         self,
-        log_path:      str = "logs/violations.jsonl",
-        snapshot_dir:  str = "assets/snapshots",
-        webhook_url:   str | None = None,
-        student_id:    str = "unknown",
+        log_path:     str = "logs/violations.jsonl",
+        snapshot_dir: str = "assets/snapshots",
+        webhook_url:  str | None = None,
+        student_id:   str = "unknown",
     ):
         self.log_path     = Path(log_path)
         self.snapshot_dir = Path(snapshot_dir)
@@ -31,41 +34,75 @@ class ViolationLogger:
         self.log_path.parent.mkdir(parents=True, exist_ok=True)
         self.snapshot_dir.mkdir(parents=True, exist_ok=True)
 
-        self._cooldown_sec = 5.0
-        self._last_logged  = 0.0
+        self._cooldown_sec      = 5.0
+        self._last_logged       = 0.0
+        self._obj_last_logged   = {}
+        self._face_last_logged  = 0.0
+        self._gaze_last_logged  = 0.0
+
+    # ------------------------------------------------------------------
+    # Head pose gaze violation
+    # ------------------------------------------------------------------
 
     def log(self, frame: np.ndarray, status: dict):
-        """
-        Call this every frame a violation is active.
-        Internally rate-limits to avoid duplicate entries.
-        """
         now = time.monotonic()
         if now - self._last_logged < self._cooldown_sec:
             return
         self._last_logged = now
 
-        timestamp = datetime.now(timezone.utc).isoformat()
-        snap_name = f"violation_{timestamp.replace(':', '-').replace('.', '-')}.jpg"
-        snap_path = self.snapshot_dir / snap_name
+        timestamp = self._timestamp()
+        snap_path = self.snapshot_dir / f"gaze_{self._safe_ts(timestamp)}.jpg"
 
-        # Save snapshot in background so we don't block the video loop
-        frame_copy = frame.copy()
+        record = {
+            "type":         "gaze_violation",
+            "timestamp":    timestamp,
+            "student_id":   self.student_id,
+            "snapshot":     str(snap_path),
+            "yaw_delta":    round(status.get("yaw_delta", 0), 2),
+            "pitch_delta":  round(status.get("pitch_delta", 0), 2),
+            "duration_sec": round(status.get("violation_duration_sec", 0), 2),
+        }
+
         threading.Thread(
-            target=self._save_and_send,
-            args=(frame_copy, snap_path, timestamp, status, snap_name),
+            target=self._write,
+            args=(frame.copy(), snap_path, record),
             daemon=True,
         ).start()
-    
-    def log_object(self, frame: np.ndarray, violations: list[dict]):
-        """
-        Logs foreign object detections separately from gaze violations.
-        Rate-limited to once per 5 seconds per unique object class.
-        """
-        now = time.monotonic()
 
-        # Per-class cooldown tracking
-        if not hasattr(self, "_obj_last_logged"):
-            self._obj_last_logged = {}
+    # ------------------------------------------------------------------
+    # Eye gaze violation
+    # ------------------------------------------------------------------
+
+    def log_eye_gaze(self, frame: np.ndarray, gaze_status: dict):
+        now = time.monotonic()
+        if now - self._gaze_last_logged < self._cooldown_sec:
+            return
+        self._gaze_last_logged = now
+
+        timestamp = self._timestamp()
+        snap_path = self.snapshot_dir / f"eye_gaze_{self._safe_ts(timestamp)}.jpg"
+
+        record = {
+            "type":         "gaze_eye_violation",
+            "timestamp":    timestamp,
+            "student_id":   self.student_id,
+            "snapshot":     str(snap_path),
+            "zone":         gaze_status.get("zone", "UNKNOWN"),
+            "duration_sec": round(gaze_status.get("duration_sec", 0), 2),
+        }
+
+        threading.Thread(
+            target=self._write,
+            args=(frame.copy(), snap_path, record),
+            daemon=True,
+        ).start()
+
+    # ------------------------------------------------------------------
+    # Foreign object violation
+    # ------------------------------------------------------------------
+
+    def log_object(self, frame: np.ndarray, violations: list[dict]):
+        now = time.monotonic()
 
         for v in violations:
             cls = v["class_name"]
@@ -73,11 +110,9 @@ class ViolationLogger:
                 continue
             self._obj_last_logged[cls] = now
 
-            timestamp = datetime.now(timezone.utc).isoformat()
-            snap_name = f"object_{cls}_{timestamp.replace(':', '-').replace('.', '-')}.jpg"
-            snap_path = self.snapshot_dir / snap_name
+            timestamp = self._timestamp()
+            snap_path = self.snapshot_dir / f"object_{cls}_{self._safe_ts(timestamp)}.jpg"
 
-            frame_copy = frame.copy()
             record = {
                 "type":       "foreign_object",
                 "timestamp":  timestamp,
@@ -89,42 +124,47 @@ class ViolationLogger:
             }
 
             threading.Thread(
-                target=self._save_object_record,
-                args=(frame_copy, snap_path, record),
+                target=self._write,
+                args=(frame.copy(), snap_path, record),
                 daemon=True,
             ).start()
 
-    def _save_object_record(self, frame, snap_path, record):
-        cv2.imwrite(str(snap_path), frame)
-        with open(self.log_path, "a") as f:
-            f.write(json.dumps(record) + "\n")
-        print(f"[Logger] Object violation: {record['label']} @ {record['timestamp']}")
-        if self.webhook_url:
-            self._send_webhook(record)
-
+    # ------------------------------------------------------------------
+    # Face mismatch violation
     # ------------------------------------------------------------------
 
-    def _save_and_send(self, frame, snap_path, timestamp, status, snap_name):
-        # 1. Save snapshot
-        cv2.imwrite(str(snap_path), frame)
+    def log_face_mismatch(self, frame: np.ndarray, face_result: dict):
+        now = time.monotonic()
+        if now - self._face_last_logged < self._cooldown_sec * 2:
+            return
+        self._face_last_logged = now
 
-        # 2. Build log record
+        timestamp = self._timestamp()
+        snap_path = self.snapshot_dir / f"face_mismatch_{self._safe_ts(timestamp)}.jpg"
+
         record = {
-            "timestamp":    timestamp,
-            "student_id":   self.student_id,
-            "snapshot":     str(snap_path),
-            "yaw_delta":    round(status.get("yaw_delta", 0), 2),
-            "pitch_delta":  round(status.get("pitch_delta", 0), 2),
-            "duration_sec": round(status.get("violation_duration_sec", 0), 2),
+            "type":       "face_mismatch",
+            "timestamp":  timestamp,
+            "student_id": self.student_id,
+            "snapshot":   str(snap_path),
+            "confidence": face_result.get("confidence", 0),
         }
 
-        # 3. Append to local JSONL file
+        threading.Thread(
+            target=self._write,
+            args=(frame.copy(), snap_path, record),
+            daemon=True,
+        ).start()
+
+    # ------------------------------------------------------------------
+    # Shared internals
+    # ------------------------------------------------------------------
+
+    def _write(self, frame, snap_path, record):
+        cv2.imwrite(str(snap_path), frame)
         with open(self.log_path, "a") as f:
             f.write(json.dumps(record) + "\n")
-
-        print(f"[Logger] Violation logged @ {timestamp}  →  {snap_path}")
-
-        # 4. Send webhook (if configured)
+        print(f"[Logger] {record['type']} @ {record['timestamp']}")
         if self.webhook_url:
             self._send_webhook(record)
 
@@ -133,6 +173,13 @@ class ViolationLogger:
             import requests
             resp = requests.post(self.webhook_url, json=record, timeout=5)
             resp.raise_for_status()
-            print(f"[Logger] Webhook sent: HTTP {resp.status_code}")
         except Exception as e:
             print(f"[Logger] Webhook failed: {e}")
+
+    @staticmethod
+    def _timestamp() -> str:
+        return datetime.now(timezone.utc).isoformat()
+
+    @staticmethod
+    def _safe_ts(ts: str) -> str:
+        return ts.replace(":", "-").replace(".", "-")
